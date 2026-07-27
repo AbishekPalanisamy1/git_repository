@@ -2,7 +2,7 @@ CREATE VIEW vw_HighSalaryEmployees AS
 SELECT
     empid,
     empname,
-    salary,
+    saary,
     department_id
 FROM employee
 WHERE salary < 60000;
