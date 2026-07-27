@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "PowerShell(python -c \"import mysql.connector; print\\('driver ok', mysql.connector.__version__\\)\")",
-      "PowerShell(python -c \"from views import extract_view_body as e; print\\(repr\\(e\\('CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `employee` AS select `e`.`id` AS `id` from `emp` `e`;'\\)\\)\\); print\\(repr\\(e\\('SELECT id FROM emp'\\)\\)\\)\")"
+      "PowerShell(python -c \"from views import extract_view_body as e; print\\(repr\\(e\\('CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `employee` AS select `e`.`id` AS `id` from `emp` `e`;'\\)\\)\\); print\\(repr\\(e\\('SELECT id FROM emp'\\)\\)\\)\")",
+      "Bash(python compare_views.py)"
     ]
   }
 }
