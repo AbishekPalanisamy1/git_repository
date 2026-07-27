@@ -1,4 +1,4 @@
-CREATE VIEW vw_DepartmentSalarySummary AS
+CREATE VIEW vw_department_salary_summary AS
 SELECT
     d.department_id,
     d.department_name,
@@ -8,6 +8,4 @@ SELECT
 FROM department d
 LEFT JOIN employee e
 ON d.department_id = e.department_id
-GROUP BY
-    d.department_id,
-    d.department_name;
+GROUP BY d.department_id, d.department_name;
