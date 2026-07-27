@@ -1,6 +1,5 @@
 import os
 import re
-import difflib
 import mysql.connector
 import requests
 
@@ -20,12 +19,7 @@ GITHUB_CONFIG = {
     "owner": "AbishekPalanisamy1",
     "repo": "git_repository",
     "branch": "main",
-    "path": "sql_views/Views",   # folder inside the repo that holds the .sql files
-
-    # Optional: a Personal Access Token. Required for private repos,
-    # and recommended even for public repos to avoid GitHub's low
-    # unauthenticated rate limit (60 requests/hour vs 5000/hour with a token).
-    # Create one at https://github.com/settings/tokens (repo:read scope is enough).
+    "path": "sql_views/Views",
     "token": None
 }
 
@@ -374,49 +368,304 @@ def to_diff_lines(normalized_sql):
 # COMPARE
 # =====================================================
 
-def compare(view_name):
+def compare(view_name, db_sql_raw, git_sql_raw):
 
-    db_sql_raw = get_view_definition(view_name)
-    git_sql_raw = read_sql_file(view_name)
-
-    print("\n" + "=" * 100)
-    print("VIEW :", view_name)
+    print("=" * 100)
+    print(f"VIEW : {view_name}")
     print("=" * 100)
 
-    if git_sql_raw is None:
-        print("STATUS : FILE NOT FOUND IN GIT")
-        return "missing"
+    # ----------------------------------------
+    # Try to get MySQL formatted SQL from Git
+    # ----------------------------------------
 
-    # Run the git SQL through MySQL as a temp view so it gets canonicalized
-    # the same way the real view was, making the comparison apples-to-apples.
-    git_sql_canonical = get_git_view_definition(view_name, git_sql_raw)
+    try:
+        git_sql_canonical = get_git_view_definition(view_name, git_sql_raw)
+    except Exception:
+        git_sql_canonical = git_sql_raw
 
     db_sql = normalize(db_sql_raw)
     git_sql = normalize(git_sql_canonical)
+    
+    # print("\n========== DATABASE SQL ==========")
+    # print(db_sql)
 
-    if db_sql == git_sql:
-        print("STATUS : MATCH")
-        return "match"
+    # print("\n========== GIT SQL ==========")
+    # print(git_sql)
+
+    db_parsed = parse_sql(db_sql)
+    git_parsed = parse_sql(git_sql)
+    
+    # print("\n========== DATABASE PARSED ==========")
+    # print(db_parsed)
+
+    # print("\n========== GIT PARSED ==========")
+    # print(git_parsed)
+
+    differences = compare_parsed_sql(db_parsed, git_parsed)
+
+    if not differences:
+        print("STATUS : SAME")
+        print()
+        return True
 
     print("STATUS : DIFFERENT")
     print("-" * 100)
 
-    db_lines = to_diff_lines(db_sql)
-    git_lines = to_diff_lines(git_sql)
+    for i, diff in enumerate(differences, 1):
 
-    diff = difflib.ndiff(db_lines, git_lines)
+        print(f"Difference {i}")
+        print(f"SECTION  : {diff['section']}")
+        print(f"DATABASE : {diff['database']}")
+        print(f"GIT      : {diff['git']}")
+        print("-" * 100)
 
-    for line in diff:
+    print()
 
-        if line.startswith("- "):
-            print("DATABASE :", line[2:])
+    return False
 
-        elif line.startswith("+ "):
-            print("GIT      :", line[2:])
 
-    print("-" * 100)
+import re
 
-    return "different"
+def parse_sql(sql):
+    result = {
+        "select": [],
+        "from": "",
+        "joins": [],
+        "where": "",
+        "group_by": "",
+        "having": "",
+        "order_by": ""
+    }
+
+    if not sql:
+        return result
+
+    # -----------------------------
+    # Normalize SQL
+    # -----------------------------
+    sql = sql.replace("\n", " ")
+    sql = sql.replace("\r", " ")
+    sql = sql.replace("`", "")
+    sql = re.sub(r"\s+", " ", sql).strip()
+
+    # Remove CREATE VIEW ... AS
+    sql = re.sub(
+        r"create\s+(?:algorithm=.*?)?view\s+\S+\s+as\s+",
+        "",
+        sql,
+        flags=re.I
+    )
+
+    # -----------------------------
+    # SELECT
+    # -----------------------------
+    m = re.search(
+        r"select\s+(.*?)\s+from\s",
+        sql,
+        re.I | re.S
+    )
+
+    if m:
+        cols = m.group(1)
+
+        columns = []
+
+        for col in cols.split(","):
+            col = col.strip()
+
+            # Remove alias
+            col = re.sub(r"\s+as\s+\w+$", "", col, flags=re.I)
+
+            # Remove table alias
+            if "." in col:
+                col = col.split(".")[-1]
+
+            columns.append(col.strip())
+
+        result["select"] = columns
+
+    # -----------------------------
+    # FROM
+    # -----------------------------
+    m = re.search(
+        r"from\s+\(?\s*([a-zA-Z0-9_]+(?:\s+\w+)?)",
+        sql,
+        re.I
+    )
+
+    if m:
+        result["from"] = m.group(1).strip()
+
+    # -----------------------------
+    # JOINS
+    # -----------------------------
+    joins = re.findall(
+        r"(?:left|right|inner|full|cross)?\s*join\s+.*?\s+on\s*\(?\(?\s*.*?(?=\)\)?\s*$|\s+(?:left|right|inner|full|cross)?\s*join|\s+where|\s+group\s+by|\s+having|\s+order\s+by|$)",
+        sql,
+        re.I | re.S
+    )
+
+    result["joins"] = [j.strip() for j in joins]
+
+    # -----------------------------
+    # WHERE
+    # -----------------------------
+    m = re.search(
+        r"where\s+(.*?)(?=\s+group\s+by|\s+having|\s+order\s+by|$)",
+        sql,
+        re.I | re.S
+    )
+
+    if m:
+        result["where"] = m.group(1).strip()
+
+    # -----------------------------
+    # GROUP BY
+    # -----------------------------
+    m = re.search(
+        r"group\s+by\s+(.*?)(?=\s+having|\s+order\s+by|$)",
+        sql,
+        re.I | re.S
+    )
+
+    if m:
+        result["group_by"] = m.group(1).strip()
+
+    # -----------------------------
+    # HAVING
+    # -----------------------------
+    m = re.search(
+        r"having\s+(.*?)(?=\s+order\s+by|$)",
+        sql,
+        re.I | re.S
+    )
+
+    if m:
+        result["having"] = m.group(1).strip()
+
+    # -----------------------------
+    # ORDER BY
+    # -----------------------------
+    m = re.search(
+        r"order\s+by\s+(.*)$",
+        sql,
+        re.I | re.S
+    )
+
+    if m:
+        result["order_by"] = m.group(1).strip()
+
+    return result
+
+def compare_parsed_sql(db_parsed, git_parsed):
+
+    differences = []
+
+    # -----------------------------
+    # SELECT Columns
+    # -----------------------------
+
+    db_cols = db_parsed["select"]
+    git_cols = git_parsed["select"]
+
+    max_len = max(len(db_cols), len(git_cols))
+
+    for i in range(max_len):
+
+        db = db_cols[i] if i < len(db_cols) else "<missing>"
+        git = git_cols[i] if i < len(git_cols) else "<missing>"
+
+        if db != git:
+
+            differences.append({
+                "section": "COLUMN",
+                "database": db,
+                "git": git
+            })
+
+    # -----------------------------
+    # FROM
+    # -----------------------------
+
+    if db_parsed["from"] != git_parsed["from"]:
+
+        differences.append({
+            "section": "FROM",
+            "database": db_parsed["from"],
+            "git": git_parsed["from"]
+        })
+
+    # -----------------------------
+    # JOINS
+    # -----------------------------
+
+    db_join = db_parsed["joins"]
+    git_join = git_parsed["joins"]
+
+    max_join = max(len(db_join), len(git_join))
+
+    for i in range(max_join):
+
+        db = db_join[i] if i < len(db_join) else "<missing>"
+        git = git_join[i] if i < len(git_join) else "<missing>"
+
+        if db != git:
+
+            differences.append({
+                "section": "JOIN",
+                "database": db,
+                "git": git
+            })
+
+    # -----------------------------
+    # WHERE
+    # -----------------------------
+
+    if db_parsed["where"] != git_parsed["where"]:
+
+        differences.append({
+            "section": "WHERE",
+            "database": db_parsed["where"],
+            "git": git_parsed["where"]
+        })
+
+    # -----------------------------
+    # GROUP BY
+    # -----------------------------
+
+    if db_parsed["group_by"] != git_parsed["group_by"]:
+
+        differences.append({
+            "section": "GROUP BY",
+            "database": db_parsed["group_by"],
+            "git": git_parsed["group_by"]
+        })
+
+    # -----------------------------
+    # HAVING
+    # -----------------------------
+
+    if db_parsed["having"] != git_parsed["having"]:
+
+        differences.append({
+            "section": "HAVING",
+            "database": db_parsed["having"],
+            "git": git_parsed["having"]
+        })
+
+    # -----------------------------
+    # ORDER BY
+    # -----------------------------
+
+    if db_parsed["order_by"] != git_parsed["order_by"]:
+
+        differences.append({
+            "section": "ORDER BY",
+            "database": db_parsed["order_by"],
+            "git": git_parsed["order_by"]
+        })
+
+    return differences
 
 
 # =====================================================
@@ -457,8 +706,13 @@ def main():
     for view in views:
 
         try:
+            
+            db_sql_raw = get_view_definition(view)
 
-            result = compare(view)
+            git_sql_raw = read_sql_file(view)
+
+
+            result = compare(view,db_sql_raw,git_sql_raw)
 
             if result == "match":
                 matched += 1

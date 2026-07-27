@@ -7,4 +7,4 @@ SELECT
     d.department_name
 FROM employee e
 JOIN department d
-ON e.department_id = d.depament_id;
+ON e.department_id = d.deparment_id;
