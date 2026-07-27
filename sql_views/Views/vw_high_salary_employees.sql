@@ -5,8 +5,8 @@ SELECT
     department_id,
     salary
 FROM employee
-WHERE salary > (
-    SELECT AVG(salary)
+WHERE salary < (
+    SELECT AVG(sal)
     FROM employee
 );
 

@@ -295,6 +295,33 @@ def compare(view_name, db_sql_raw, git_sql_raw):
     return False
 
 
+def split_top_level_commas(text):
+    """Split on commas that are NOT inside parentheses, so a column like
+    'concat(first, last)' is kept as one piece instead of being split."""
+
+    parts = []
+    depth = 0
+    current = ""
+
+    for ch in text:
+        if ch == "(":
+            depth += 1
+            current += ch
+        elif ch == ")":
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += ch
+
+    if current.strip():
+        parts.append(current.strip())
+
+    return parts
+
+
 def parse_sql(sql):
     result = {
         "select": [],
@@ -335,17 +362,13 @@ def parse_sql(sql):
 
         columns = []
 
-        for col in cols.split(","):
+        # Keep the full column text (including any "as <alias>") so a renamed
+        # alias can be detected later. Splitting is done on top-level commas.
+        for col in split_top_level_commas(cols):
             col = col.strip()
 
-            # Remove alias
-            col = re.sub(r"\s+as\s+\w+$", "", col, flags=re.I)
-
-            # Remove table alias
-            if "." in col:
-                col = col.split(".")[-1]
-
-            columns.append(col.strip())
+            if col:
+                columns.append(col)
 
         result["select"] = columns
 
@@ -438,28 +461,82 @@ def clean_clause(text):
 
     return text.strip()
 
+
+def parse_column(col):
+    """Split a SELECT column into (expression, alias), both normalized.
+    The alias is kept separately so a renamed alias can be reported."""
+
+    col = clean_clause(col)
+
+    # trailing "as <alias>"  ->  capture the alias word
+    m = re.search(r"\s+as\s+([a-z0-9_]+)$", col)
+
+    if m:
+        alias = m.group(1)
+        expr = col[:m.start()].strip()
+    else:
+        alias = ""
+        expr = col.strip()
+
+    return expr, alias
+
+
+def format_column(expr, alias):
+    """Rebuild a readable column string from (expression, alias)."""
+
+    return f"{expr} as {alias}" if alias else expr
+
+
 def compare_parsed_sql(db_parsed, git_parsed):
 
     differences = []
 
     # SELECT Columns
-    db_cols = db_parsed["select"]
-    git_cols = git_parsed["select"]
+    # Match columns by their content, NOT by position, so removing or adding
+    # a single column reports one difference instead of shifting (and flagging)
+    # every column after it. Columns whose expression is the same but whose
+    # alias name differs are reported as an alias change.
+    db_cols = [parse_column(c) for c in db_parsed["select"]]
+    git_cols = [parse_column(c) for c in git_parsed["select"]]
 
-    max_len = max(len(db_cols), len(git_cols))
+    db_remaining = list(db_cols)
+    git_remaining = list(git_cols)
 
-    for i in range(max_len):
+    # 1. Drop columns that match exactly (same expression AND same alias)
+    for col in list(db_remaining):
+        if col in git_remaining:
+            db_remaining.remove(col)
+            git_remaining.remove(col)
 
-        db = db_cols[i] if i < len(db_cols) else "<missing>"
-        git = git_cols[i] if i < len(git_cols) else "<missing>"
+    # 2. Same expression but different alias -> the alias name was changed
+    for db_col in list(db_remaining):
+        match = next((g for g in git_remaining if g[0] == db_col[0]), None)
 
-        if clean_clause(db) != clean_clause(git):
+        if match:
+            db_remaining.remove(db_col)
+            git_remaining.remove(match)
 
             differences.append({
-                "section": "COLUMN",
-                "database": db,
-                "git": git
+                "section": "COLUMN ALIAS",
+                "database": format_column(*db_col),
+                "git": format_column(*match)
             })
+
+    # 3. Columns left only in DB -> missing from the Git file
+    for db_col in db_remaining:
+        differences.append({
+            "section": "COLUMN MISSING IN GIT",
+            "database": format_column(*db_col),
+            "git": "<missing>"
+        })
+
+    # 4. Columns left only in Git -> missing from the DB
+    for git_col in git_remaining:
+        differences.append({
+            "section": "COLUMN MISSING IN DB",
+            "database": "<missing>",
+            "git": format_column(*git_col)
+        })
 
     # FROM
     if clean_clause(db_parsed["from"]) != clean_clause(git_parsed["from"]):

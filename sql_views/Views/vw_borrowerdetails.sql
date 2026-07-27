@@ -5,6 +5,7 @@ SELECT
     LoanId,
     BGOId,
     BorrowerName,
+    BorrowerRole,
     PrimaryFlag,
     City,
     StateCode,
