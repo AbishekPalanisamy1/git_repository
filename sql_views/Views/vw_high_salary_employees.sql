@@ -6,6 +6,9 @@ SELECT
     salary
 FROM employee
 WHERE salary > (
-    SELECT AVG(salary)
+    SELECT AV(salary)
     FROM employee
 );
+
+
+--aggregate function 
