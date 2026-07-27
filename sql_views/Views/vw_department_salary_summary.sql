@@ -11,4 +11,3 @@ ON d.departmen_id = e.department_id
 GROUP BY d.department_id, d.department_name;
 
 
--- on department_id 

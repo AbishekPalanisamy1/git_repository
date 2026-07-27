@@ -557,6 +557,32 @@ def parse_sql(sql):
 
     return result
 
+
+
+def clean_clause(text):
+
+    if text is None:
+        return ""
+
+    text = text.lower()
+
+    # Remove backticks
+    text = text.replace("`", "")
+
+    # Remove parentheses
+    text = text.replace("(", "")
+    text = text.replace(")", "")
+
+    # Remove extra spaces
+    text = re.sub(r"\s+", " ", text)
+
+    # Remove spaces around commas
+    text = re.sub(r"\s*,\s*", ",", text)
+
+    # Remove spaces around '='
+    text = re.sub(r"\s*=\s*", "=", text)
+
+    return text.strip()
 def compare_parsed_sql(db_parsed, git_parsed):
 
     differences = []
@@ -564,7 +590,6 @@ def compare_parsed_sql(db_parsed, git_parsed):
     # -----------------------------
     # SELECT Columns
     # -----------------------------
-
     db_cols = db_parsed["select"]
     git_cols = git_parsed["select"]
 
@@ -575,7 +600,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
         db = db_cols[i] if i < len(db_cols) else "<missing>"
         git = git_cols[i] if i < len(git_cols) else "<missing>"
 
-        if db != git:
+        if clean_clause(db) != clean_clause(git):
 
             differences.append({
                 "section": "COLUMN",
@@ -586,8 +611,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
     # -----------------------------
     # FROM
     # -----------------------------
-
-    if db_parsed["from"] != git_parsed["from"]:
+    if clean_clause(db_parsed["from"]) != clean_clause(git_parsed["from"]):
 
         differences.append({
             "section": "FROM",
@@ -598,7 +622,6 @@ def compare_parsed_sql(db_parsed, git_parsed):
     # -----------------------------
     # JOINS
     # -----------------------------
-
     db_join = db_parsed["joins"]
     git_join = git_parsed["joins"]
 
@@ -609,7 +632,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
         db = db_join[i] if i < len(db_join) else "<missing>"
         git = git_join[i] if i < len(git_join) else "<missing>"
 
-        if db != git:
+        if clean_clause(db) != clean_clause(git):
 
             differences.append({
                 "section": "JOIN",
@@ -620,8 +643,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
     # -----------------------------
     # WHERE
     # -----------------------------
-
-    if db_parsed["where"] != git_parsed["where"]:
+    if clean_clause(db_parsed["where"]) != clean_clause(git_parsed["where"]):
 
         differences.append({
             "section": "WHERE",
@@ -632,8 +654,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
     # -----------------------------
     # GROUP BY
     # -----------------------------
-
-    if db_parsed["group_by"] != git_parsed["group_by"]:
+    if clean_clause(db_parsed["group_by"]) != clean_clause(git_parsed["group_by"]):
 
         differences.append({
             "section": "GROUP BY",
@@ -644,8 +665,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
     # -----------------------------
     # HAVING
     # -----------------------------
-
-    if db_parsed["having"] != git_parsed["having"]:
+    if clean_clause(db_parsed["having"]) != clean_clause(git_parsed["having"]):
 
         differences.append({
             "section": "HAVING",
@@ -656,8 +676,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
     # -----------------------------
     # ORDER BY
     # -----------------------------
-
-    if db_parsed["order_by"] != git_parsed["order_by"]:
+    if clean_clause(db_parsed["order_by"]) != clean_clause(git_parsed["order_by"]):
 
         differences.append({
             "section": "ORDER BY",

@@ -6,7 +6,7 @@ SELECT
     salary
 FROM employee
 WHERE salary > (
-    SELECT AV(salary)
+    SELECT AVG(salary)
     FROM employee
 );
 
