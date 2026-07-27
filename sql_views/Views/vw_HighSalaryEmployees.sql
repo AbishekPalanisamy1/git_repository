@@ -5,4 +5,4 @@ SELECT
     salary,
     department_id
 FROM employee
-WHERE salary > 50000;
+WHERE salary < 60000;
