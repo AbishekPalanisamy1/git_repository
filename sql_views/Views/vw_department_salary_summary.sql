@@ -9,5 +9,7 @@ FROM department d
 LEFT JOIN employee e
 ON d.department_id = e.department_id
 GROUP BY d.department_id, d.department_name;
+ON d.department_id = e.department_id
+GROUP BY d.department_id, d.department_name;
 
 
