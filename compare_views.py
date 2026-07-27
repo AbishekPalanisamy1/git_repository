@@ -72,9 +72,6 @@ def get_git_view_definition(view_name, git_sql):
 
     temp_name = view_name + "_gitcheck_tmp"
 
-    # Replace the view name in the git SQL with the temp name so we don't
-    # clobber the real view. Handles CREATE VIEW / CREATE OR REPLACE VIEW,
-    # with or without backticks around the name.
     temp_sql, n = re.subn(
         r'(create\s+(or\s+replace\s+)?view\s+)`?' + re.escape(view_name) + r'`?',
         r'\1`' + temp_name + '`',
@@ -217,23 +214,17 @@ def normalize(sql):
     if sql is None:
         return ""
 
-    # lowercase
     sql = sql.lower()
 
-    # remove comments
     sql = re.sub(r'--.*', '', sql)
     sql = re.sub(r'/\*.*?\*/', '', sql, flags=re.S)
 
-    # remove mysql specific options
     sql = re.sub(r'algorithm\s*=\s*\w+', '', sql)
     sql = re.sub(r"definer\s*=\s*`[^`]*`@`[^`]*`", '', sql)
     sql = re.sub(r'sql security\s+\w+', '', sql)
 
-    # remove backticks
     sql = sql.replace("`", "")
 
-    # remove the view name itself so real-vs-temp naming differences
-    # (e.g. vw_x vs vw_x_gitcheck_tmp) don't cause false mismatches
     sql = re.sub(r'(create\s+(or\s+replace\s+)?view\s+)\S+', r'\1<VIEW>', sql, count=1)
 
     cleaned_lines = []
@@ -336,13 +327,11 @@ def parse_sql(sql):
     if not sql:
         return result
 
-    # Normalize SQL
     sql = sql.replace("\n", " ")
     sql = sql.replace("\r", " ")
     sql = sql.replace("`", "")
     sql = re.sub(r"\s+", " ", sql).strip()
 
-    # Remove CREATE VIEW ... AS
     sql = re.sub(
         r"create\s+(?:algorithm=.*?)?view\s+\S+\s+as\s+",
         "",
@@ -362,8 +351,6 @@ def parse_sql(sql):
 
         columns = []
 
-        # Keep the full column text (including any "as <alias>") so a renamed
-        # alias can be detected later. Splitting is done on top-level commas.
         for col in split_top_level_commas(cols):
             col = col.strip()
 
@@ -434,7 +421,6 @@ def parse_sql(sql):
     return result
 
 
-
 def clean_clause(text):
 
     if text is None:
@@ -442,33 +428,47 @@ def clean_clause(text):
 
     text = text.lower()
 
-    # Remove backticks
     text = text.replace("`", "")
 
-    # Remove parentheses (replace with a space so tokens like "on(" don't
-    # get glued to the next word, e.g. "on((d.id" -> "on  d.id" not "ond.id")
     text = text.replace("(", " ")
     text = text.replace(")", " ")
 
-    # Remove extra spaces
     text = re.sub(r"\s+", " ", text)
 
-    # Remove spaces around commas
     text = re.sub(r"\s*,\s*", ",", text)
 
-    # Remove spaces around '='
     text = re.sub(r"\s*=\s*", "=", text)
 
     return text.strip()
 
 
+def strip_qualifiers(text):
+    """Remove 'table.' / 'alias.' prefixes from every identifier, e.g.
+    'employee.salary' -> 'salary'. Used ONLY for equality comparisons so
+    that the same column/clause written with or without a table qualifier
+    isn't reported as a false difference. Display text is left untouched."""
+
+    if text is None:
+        return ""
+
+    return re.sub(r"\b[a-z0-9_]+\.([a-z0-9_]+)\b", r"\1", text)
+
+
+def clause_compare_key(text):
+    """Normalized form of a clause used ONLY to decide whether it changed."""
+
+    return strip_qualifiers(clean_clause(text))
+
+
 def parse_column(col):
-    """Split a SELECT column into (expression, alias), both normalized.
-    The alias is kept separately so a renamed alias can be reported."""
+    """Split a SELECT column into (expr, expr_key, alias).
+    - expr      : cleaned expression, KEPT AS-IS for display (with qualifiers)
+    - expr_key  : qualifier-stripped expression, used only for matching
+    - alias     : the explicit "AS alias" if present
+    """
 
     col = clean_clause(col)
 
-    # trailing "as <alias>"  ->  capture the alias word
     m = re.search(r"\s+as\s+([a-z0-9_]+)$", col)
 
     if m:
@@ -478,7 +478,9 @@ def parse_column(col):
         alias = ""
         expr = col.strip()
 
-    return expr, alias
+    expr_key = strip_qualifiers(expr)
+
+    return expr, expr_key, alias
 
 
 def format_column(expr, alias):
@@ -487,30 +489,45 @@ def format_column(expr, alias):
     return f"{expr} as {alias}" if alias else expr
 
 
+def effective_alias(col):
+    """The alias MySQL would actually display for this column: the
+    explicit 'AS alias' if given, otherwise the column name itself
+    (MySQL implicitly uses the bare column name when no alias is given)."""
+
+    expr_key, alias = col[1], col[2]
+    return alias if alias else expr_key.split(".")[-1]
+
+
 def compare_parsed_sql(db_parsed, git_parsed):
 
     differences = []
 
     # SELECT Columns
-    # Match columns by their content, NOT by position, so removing or adding
-    # a single column reports one difference instead of shifting (and flagging)
-    # every column after it. Columns whose expression is the same but whose
-    # alias name differs are reported as an alias change.
+    # Match columns by their qualifier-stripped expression (expr_key), NOT
+    # the raw text and NOT position -- so 'employee.empid' and 'empid' are
+    # recognized as the same column, and adding/removing one column reports
+    # one difference instead of a false mismatch for every column after it.
     db_cols = [parse_column(c) for c in db_parsed["select"]]
     git_cols = [parse_column(c) for c in git_parsed["select"]]
 
     db_remaining = list(db_cols)
     git_remaining = list(git_cols)
 
-    # 1. Drop columns that match exactly (same expression AND same alias)
+    # 1. Drop columns that match exactly (same expr_key AND same effective alias)
     for col in list(db_remaining):
-        if col in git_remaining:
-            db_remaining.remove(col)
-            git_remaining.remove(col)
+        match = next(
+            (g for g in git_remaining
+             if g[1] == col[1] and effective_alias(g) == effective_alias(col)),
+            None
+        )
 
-    # 2. Same expression but different alias -> the alias name was changed
+        if match:
+            db_remaining.remove(col)
+            git_remaining.remove(match)
+
+    # 2. Same expr_key but different alias -> the alias name was genuinely changed
     for db_col in list(db_remaining):
-        match = next((g for g in git_remaining if g[0] == db_col[0]), None)
+        match = next((g for g in git_remaining if g[1] == db_col[1]), None)
 
         if match:
             db_remaining.remove(db_col)
@@ -518,15 +535,15 @@ def compare_parsed_sql(db_parsed, git_parsed):
 
             differences.append({
                 "section": "COLUMN ALIAS",
-                "database": format_column(*db_col),
-                "git": format_column(*match)
+                "database": format_column(db_col[0], db_col[2]),
+                "git": format_column(match[0], match[2])
             })
 
     # 3. Columns left only in DB -> missing from the Git file
     for db_col in db_remaining:
         differences.append({
             "section": "COLUMN MISSING IN GIT",
-            "database": format_column(*db_col),
+            "database": format_column(db_col[0], db_col[2]),
             "git": "<missing>"
         })
 
@@ -535,10 +552,10 @@ def compare_parsed_sql(db_parsed, git_parsed):
         differences.append({
             "section": "COLUMN MISSING IN DB",
             "database": "<missing>",
-            "git": format_column(*git_col)
+            "git": format_column(git_col[0], git_col[2])
         })
 
-    # FROM
+    # FROM (table names themselves matter here, so no qualifier-stripping)
     if clean_clause(db_parsed["from"]) != clean_clause(git_parsed["from"]):
 
         differences.append({
@@ -558,7 +575,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
         db = db_join[i] if i < len(db_join) else "<missing>"
         git = git_join[i] if i < len(git_join) else "<missing>"
 
-        if clean_clause(db) != clean_clause(git):
+        if clause_compare_key(db) != clause_compare_key(git):
 
             differences.append({
                 "section": "JOIN",
@@ -567,7 +584,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
             })
 
     # WHERE
-    if clean_clause(db_parsed["where"]) != clean_clause(git_parsed["where"]):
+    if clause_compare_key(db_parsed["where"]) != clause_compare_key(git_parsed["where"]):
 
         differences.append({
             "section": "WHERE",
@@ -576,7 +593,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
         })
 
     # GROUP BY
-    if clean_clause(db_parsed["group_by"]) != clean_clause(git_parsed["group_by"]):
+    if clause_compare_key(db_parsed["group_by"]) != clause_compare_key(git_parsed["group_by"]):
 
         differences.append({
             "section": "GROUP BY",
@@ -585,7 +602,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
         })
 
     # HAVING
-    if clean_clause(db_parsed["having"]) != clean_clause(git_parsed["having"]):
+    if clause_compare_key(db_parsed["having"]) != clause_compare_key(git_parsed["having"]):
 
         differences.append({
             "section": "HAVING",
@@ -594,7 +611,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
         })
 
     # ORDER BY
-    if clean_clause(db_parsed["order_by"]) != clean_clause(git_parsed["order_by"]):
+    if clause_compare_key(db_parsed["order_by"]) != clause_compare_key(git_parsed["order_by"]):
 
         differences.append({
             "section": "ORDER BY",
@@ -644,8 +661,6 @@ def main():
 
             git_sql_raw = read_sql_file(view)
 
-            # If the .sql file is not in Git (e.g. it was deleted), skip the
-            # comparison entirely and just count it as "in DB but not in Git".
             if git_sql_raw is None:
                 missing += 1
                 continue

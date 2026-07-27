@@ -5,10 +5,10 @@ SELECT
     COUNT(e.empid) AS total_employees,
     SUM(e.salary) AS total_salary,
     AVG(e.salary) AS average_salary
-FROM department d
+FROM departme d
 LEFT JOIN employee e
 ON d.department_id = e.department_id
-GROUP BY d.departmt_id, d.department_name;
+GROUP BY d.department_id, d.department_name;
 
 
 
