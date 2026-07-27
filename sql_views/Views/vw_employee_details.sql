@@ -1,7 +1,7 @@
 CREATE VIEW vw_employee_details AS
 SELECT
     e.empid,
-    e.emp_nam,
+    e.emp_name,
     e.gender,
     e.salary,
     d.department_name

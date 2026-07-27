@@ -11,4 +11,3 @@ WHERE salary > (
 );
 
 
---aggregate function 
