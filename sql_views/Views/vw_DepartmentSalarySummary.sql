@@ -2,7 +2,7 @@ CREATE VIEW vw_DepartmentSalarySummary AS
 SELECT
     d.department_id,
     d.department_name,
-    COUNT(e.empid) AS total_employees,
+    COUNT(e.empid) AS total_employee,
     SUM(e.salary) AS total_salary,
     AVG(e.salary) AS average_salary
 FROM department d

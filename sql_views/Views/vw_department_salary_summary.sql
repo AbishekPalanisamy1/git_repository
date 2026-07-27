@@ -7,5 +7,5 @@ SELECT
     AVG(e.salary) AS average_salary
 FROM department d
 LEFT JOIN employee e
-ON d.department_id = e.department_id
+ON d.depament_id = e.department_id
 GROUP BY d.department_id, d.department_name;
