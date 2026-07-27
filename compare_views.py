@@ -558,6 +558,7 @@ def parse_sql(sql):
     return result
 
 
+
 def clean_clause(text):
 
     if text is None:
@@ -568,14 +569,9 @@ def clean_clause(text):
     # Remove backticks
     text = text.replace("`", "")
 
-    # Replace parentheses with spaces
-    text = text.replace("(", " ")
-    text = text.replace(")", " ")
-
-    # Remove table aliases/prefixes
-    # employee.salary -> salary
-    # e.salary -> salary
-    text = re.sub(r"\b[a-zA-Z_][a-zA-Z0-9_]*\.", "", text)
+    # Remove parentheses
+    text = text.replace("(", "")
+    text = text.replace(")", "")
 
     # Remove extra spaces
     text = re.sub(r"\s+", " ", text)
@@ -583,20 +579,8 @@ def clean_clause(text):
     # Remove spaces around commas
     text = re.sub(r"\s*,\s*", ",", text)
 
-    # Remove spaces around =
+    # Remove spaces around '='
     text = re.sub(r"\s*=\s*", "=", text)
-
-    # Remove spaces around >
-    text = re.sub(r"\s*>\s*", ">", text)
-
-    # Remove spaces around <
-    text = re.sub(r"\s*<\s*", "<", text)
-
-    # Remove spaces around >=
-    text = re.sub(r"\s*>=\s*", ">=", text)
-
-    # Remove spaces around <=
-    text = re.sub(r"\s*<=\s*", "<=", text)
 
     return text.strip()
 
