@@ -1,4 +1,0 @@
-CREATE VIEW employee AS
-SELECT id, name, department, salary
-FROM emp
-WHERE active = 1;
