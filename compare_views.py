@@ -1,11 +1,8 @@
-import os
 import re
 import mysql.connector
 import requests
 
-# =====================================================
 # CONFIGURATION
-# =====================================================
 
 DB_CONFIG = {
     "host": "localhost",
@@ -23,9 +20,7 @@ GITHUB_CONFIG = {
     "token": None
 }
 
-# =====================================================
 # DATABASE
-# =====================================================
 
 def get_connection():
     return mysql.connector.connect(**DB_CONFIG)
@@ -119,9 +114,7 @@ def get_git_view_definition(view_name, git_sql):
         conn.close()
 
 
-# =====================================================
 # READ SQL FILES FROM GITHUB
-# =====================================================
 
 _github_file_list_cache = None  # populated once per run
 
@@ -217,9 +210,7 @@ def get_all_git_view_names():
     return {entry["actual_name"] for entry in files.values()}
 
 
-# =====================================================
 # NORMALIZE SQL
-# =====================================================
 
 def normalize(sql):
 
@@ -261,112 +252,7 @@ def normalize(sql):
     return "\n".join(cleaned_lines).strip().rstrip(";")
 
 
-# =====================================================
-# PRETTY-PRINT FOR DIFF DISPLAY
-# =====================================================
-
-# Clause keywords that should each start on their own line
-_CLAUSE_KEYWORDS = [
-    "create or replace view", "create view",
-    "left outer join", "right outer join",
-    "left join", "right join", "inner join", "join",
-    "select", "from", "on", "where",
-    "group by", "order by", "having", "union all", "union"
-]
-
-
-def _split_top_level_commas(s):
-    """Split on commas that are NOT inside parentheses,
-    e.g. splits 'a, count(b, c), d' into ['a', 'count(b, c)', 'd']."""
-
-    parts = []
-    depth = 0
-    current = ""
-
-    for ch in s:
-
-        if ch == "(":
-            depth += 1
-            current += ch
-
-        elif ch == ")":
-            depth -= 1
-            current += ch
-
-        elif ch == "," and depth == 0:
-            parts.append(current.strip())
-            current = ""
-
-        else:
-            current += ch
-
-    if current.strip():
-        parts.append(current.strip())
-
-    return parts
-
-
-def to_diff_lines(normalized_sql):
-    """
-    Take a normalized (single-line, lowercase) SQL string and break it
-    into one line per clause keyword and one line per top-level column/
-    expression, purely for readable diffing. Does NOT change the
-    match/mismatch decision -- that still uses the raw normalized string.
-    """
-
-    text = normalized_sql
-
-    # Insert a marker before each clause keyword (longest first so
-    # e.g. "left join" is matched before "join")
-    for kw in sorted(_CLAUSE_KEYWORDS, key=len, reverse=True):
-        text = re.sub(r'(?<!\S)' + re.escape(kw) + r'(?!\S)',
-                       '\n' + kw.upper() + ' ', text)
-        # also catch keyword when followed immediately by non-space (rare)
-        text = re.sub(r'\b' + re.escape(kw) + r'\b',
-                       lambda m: m.group(0), text)
-
-    lines = []
-
-    for chunk in text.split("\n"):
-
-        chunk = chunk.strip()
-
-        if not chunk:
-            continue
-
-        # Split the clause header (e.g. "SELECT") from its body
-        matched_kw = None
-        for kw in sorted(_CLAUSE_KEYWORDS, key=len, reverse=True):
-            if chunk.upper().startswith(kw.upper()):
-                matched_kw = kw
-                break
-
-        if matched_kw:
-            header = chunk[:len(matched_kw)]
-            body = chunk[len(matched_kw):].strip()
-        else:
-            header = None
-            body = chunk
-
-        if not body:
-            if header:
-                lines.append(header.upper())
-            continue
-
-        # For select-lists / group-by lists, split on top-level commas
-        for piece in _split_top_level_commas(body):
-            if header:
-                lines.append(f"{header.upper()} {piece}".strip())
-                header = None  # only prefix the first piece
-            else:
-                lines.append(piece)
-
-    return lines
-
-
-# =====================================================
 # COMPARE
-# =====================================================
 
 def compare(view_name, db_sql_raw, git_sql_raw):
 
@@ -374,10 +260,7 @@ def compare(view_name, db_sql_raw, git_sql_raw):
     print(f"VIEW : {view_name}")
     print("=" * 100)
 
-    # ----------------------------------------
     # Try to get MySQL formatted SQL from Git
-    # ----------------------------------------
-
     try:
         git_sql_canonical = get_git_view_definition(view_name, git_sql_raw)
     except Exception:
@@ -385,21 +268,9 @@ def compare(view_name, db_sql_raw, git_sql_raw):
 
     db_sql = normalize(db_sql_raw)
     git_sql = normalize(git_sql_canonical)
-    
-    # print("\n========== DATABASE SQL ==========")
-    # print(db_sql)
-
-    # print("\n========== GIT SQL ==========")
-    # print(git_sql)
 
     db_parsed = parse_sql(db_sql)
     git_parsed = parse_sql(git_sql)
-    
-    # print("\n========== DATABASE PARSED ==========")
-    # print(db_parsed)
-
-    # print("\n========== GIT PARSED ==========")
-    # print(git_parsed)
 
     differences = compare_parsed_sql(db_parsed, git_parsed)
 
@@ -424,8 +295,6 @@ def compare(view_name, db_sql_raw, git_sql_raw):
     return False
 
 
-import re
-
 def parse_sql(sql):
     result = {
         "select": [],
@@ -440,9 +309,7 @@ def parse_sql(sql):
     if not sql:
         return result
 
-    # -----------------------------
     # Normalize SQL
-    # -----------------------------
     sql = sql.replace("\n", " ")
     sql = sql.replace("\r", " ")
     sql = sql.replace("`", "")
@@ -456,9 +323,7 @@ def parse_sql(sql):
         flags=re.I
     )
 
-    # -----------------------------
     # SELECT
-    # -----------------------------
     m = re.search(
         r"select\s+(.*?)\s+from\s",
         sql,
@@ -484,9 +349,7 @@ def parse_sql(sql):
 
         result["select"] = columns
 
-    # -----------------------------
     # FROM
-    # -----------------------------
     m = re.search(
         r"from\s+\(?\s*([a-zA-Z0-9_]+(?:\s+\w+)?)",
         sql,
@@ -496,9 +359,7 @@ def parse_sql(sql):
     if m:
         result["from"] = m.group(1).strip()
 
-    # -----------------------------
     # JOINS
-    # -----------------------------
     joins = re.findall(
         r"(?:left|right|inner|full|cross)?\s*join\s+.*?\s+on\s*\(?\(?\s*.*?(?=\)\)?\s*$|\s+(?:left|right|inner|full|cross)?\s*join|\s+where|\s+group\s+by|\s+having|\s+order\s+by|$)",
         sql,
@@ -507,9 +368,7 @@ def parse_sql(sql):
 
     result["joins"] = [j.strip() for j in joins]
 
-    # -----------------------------
     # WHERE
-    # -----------------------------
     m = re.search(
         r"where\s+(.*?)(?=\s+group\s+by|\s+having|\s+order\s+by|$)",
         sql,
@@ -519,9 +378,7 @@ def parse_sql(sql):
     if m:
         result["where"] = m.group(1).strip()
 
-    # -----------------------------
     # GROUP BY
-    # -----------------------------
     m = re.search(
         r"group\s+by\s+(.*?)(?=\s+having|\s+order\s+by|$)",
         sql,
@@ -531,9 +388,7 @@ def parse_sql(sql):
     if m:
         result["group_by"] = m.group(1).strip()
 
-    # -----------------------------
     # HAVING
-    # -----------------------------
     m = re.search(
         r"having\s+(.*?)(?=\s+order\s+by|$)",
         sql,
@@ -543,9 +398,7 @@ def parse_sql(sql):
     if m:
         result["having"] = m.group(1).strip()
 
-    # -----------------------------
     # ORDER BY
-    # -----------------------------
     m = re.search(
         r"order\s+by\s+(.*)$",
         sql,
@@ -569,9 +422,10 @@ def clean_clause(text):
     # Remove backticks
     text = text.replace("`", "")
 
-    # Remove parentheses
-    text = text.replace("(", "")
-    text = text.replace(")", "")
+    # Remove parentheses (replace with a space so tokens like "on(" don't
+    # get glued to the next word, e.g. "on((d.id" -> "on  d.id" not "ond.id")
+    text = text.replace("(", " ")
+    text = text.replace(")", " ")
 
     # Remove extra spaces
     text = re.sub(r"\s+", " ", text)
@@ -588,9 +442,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
 
     differences = []
 
-    # -----------------------------
     # SELECT Columns
-    # -----------------------------
     db_cols = db_parsed["select"]
     git_cols = git_parsed["select"]
 
@@ -609,9 +461,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
                 "git": git
             })
 
-    # -----------------------------
     # FROM
-    # -----------------------------
     if clean_clause(db_parsed["from"]) != clean_clause(git_parsed["from"]):
 
         differences.append({
@@ -620,9 +470,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
             "git": git_parsed["from"]
         })
 
-    # -----------------------------
     # JOINS
-    # -----------------------------
     db_join = db_parsed["joins"]
     git_join = git_parsed["joins"]
 
@@ -641,9 +489,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
                 "git": git
             })
 
-    # -----------------------------
     # WHERE
-    # -----------------------------
     if clean_clause(db_parsed["where"]) != clean_clause(git_parsed["where"]):
 
         differences.append({
@@ -652,9 +498,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
             "git": git_parsed["where"]
         })
 
-    # -----------------------------
     # GROUP BY
-    # -----------------------------
     if clean_clause(db_parsed["group_by"]) != clean_clause(git_parsed["group_by"]):
 
         differences.append({
@@ -663,9 +507,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
             "git": git_parsed["group_by"]
         })
 
-    # -----------------------------
     # HAVING
-    # -----------------------------
     if clean_clause(db_parsed["having"]) != clean_clause(git_parsed["having"]):
 
         differences.append({
@@ -674,9 +516,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
             "git": git_parsed["having"]
         })
 
-    # -----------------------------
     # ORDER BY
-    # -----------------------------
     if clean_clause(db_parsed["order_by"]) != clean_clause(git_parsed["order_by"]):
 
         differences.append({
@@ -688,9 +528,7 @@ def compare_parsed_sql(db_parsed, git_parsed):
     return differences
 
 
-# =====================================================
 # MAIN
-# =====================================================
 
 def main():
 
@@ -718,7 +556,7 @@ def main():
 
     matched = 0
     different = 0
-    missing = 0
+    missing = 0  # in DB but not in Git
     errors = 0
 
     print("\nFound", len(views), "views in database.\n")
@@ -726,22 +564,23 @@ def main():
     for view in views:
 
         try:
-            
-            db_sql_raw = get_view_definition(view)
 
             git_sql_raw = read_sql_file(view)
 
-
-            result = compare(view,db_sql_raw,git_sql_raw)
-
-            if result == "match":
-                matched += 1
-
-            elif result == "different":
-                different += 1
-
-            elif result == "missing":
+            # If the .sql file is not in Git (e.g. it was deleted), skip the
+            # comparison entirely and just count it as "in DB but not in Git".
+            if git_sql_raw is None:
                 missing += 1
+                continue
+
+            db_sql_raw = get_view_definition(view)
+
+            result = compare(view, db_sql_raw, git_sql_raw)
+
+            if result:
+                matched += 1
+            else:
+                different += 1
 
         except Exception as ex:
 
@@ -750,10 +589,7 @@ def main():
             print("ERROR :", view)
             print(ex)
 
-    # -------------------------------------------------
     # Cross-check: views that exist in Git but NOT in DB
-    # -------------------------------------------------
-
     db_view_names_lower = {v.lower() for v in views}
     git_view_names = get_all_git_view_names()
 
@@ -761,16 +597,6 @@ def main():
         name for name in git_view_names
         if name.lower() not in db_view_names_lower
     )
-
-    if only_in_git:
-
-        print("\n")
-        print("=" * 100)
-        print("VIEWS FOUND IN GIT BUT NOT IN DATABASE")
-        print("=" * 100)
-
-        for name in only_in_git:
-            print(" -", name)
 
     print("\n")
     print("=" * 100)
